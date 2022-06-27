@@ -10,6 +10,7 @@
 #define SPI_INTEL_H
 
 #include <linux/platform_data/x86/spi-intel.h>
+#include <linux/types.h>
 
 struct resource;
 

@@ -9,6 +9,8 @@
 #ifndef SPI_INTEL_PDATA_H
 #define SPI_INTEL_PDATA_H
 
+#include <linux/types.h>
+
 enum intel_spi_type {
 	INTEL_SPI_BYT = 1,
 	INTEL_SPI_LPT,
