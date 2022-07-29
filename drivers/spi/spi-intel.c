@@ -407,7 +407,7 @@ static int intel_spi_erase(struct intel_spi *ispi,
 	writel(addr, ispi->base + FADDR);
 
 	/*
-	 * If swseq_erase is false, it means that we cannot erase using
+	 * If swseq_erase is true, it means that we cannot erase using
 	 * HW sequencer.
 	 */
 	if (ispi->swseq_erase && ispi->swseq_enabled)
@@ -856,13 +856,6 @@ static int intel_spi_init(struct intel_spi *ispi)
 		return -EINVAL;
 	}
 
-	if ((ispi->swseq_erase || !erase_64k) && !ispi->swseq_enabled)
-	{
-		dev_err(ispi->dev, "software sequencer not enabled and erase"
-				   "is not supported by hardware sequencing\n");
-		return -EINVAL;
-	}
-
 	/*
 	 * Some controllers can only do basic operations using hardware
 	 * sequencer. All other operations are supposed to be carried out
@@ -870,9 +863,7 @@ static int intel_spi_init(struct intel_spi *ispi)
 	 */
 	if (ispi->swseq_reg && ispi->swseq_enabled) {
 		/* Disable #SMI generation from SW sequencer */
-		val = readl(ispi->sregs + SSFSTS_CTL);
-		val &= ~SSFSTS_CTL_FSMIE;
-		writel(val, ispi->sregs + SSFSTS_CTL);
+		disable_smi_generation(ispi);
 	}
 
 	/* Check controller's lock status */

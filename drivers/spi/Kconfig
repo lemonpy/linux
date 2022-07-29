@@ -440,60 +440,19 @@ config SPI_INGENIC
 config SPI_INTEL
 	tristate
 
-config SPI_INTEL_SWSEQ
-	bool
-
-config SPI_INTEL_PCI_HWSEQ
-	tristate "Intel PCH/PCU SPI flash PCI driver hardware sequencing only"
-	depends on PCI
-	depends on X86 || COMPILE_TEST
-	depends on SPI_MEM
-	select SPI_INTEL
-	help
-	  This enables PCI support for the Intel PCH/PCU SPI controller in
-	  master mode. This controller is present in modern Intel hardware
-	  and is used to hold BIOS and other persistent settings. Using
-	  this driver it is possible to upgrade BIOS directly from Linux.
-	  The driver will use HW sequencing capabilities from the chip.
-
-	  Say N here unless you know what you are doing. Overwriting the
-	  SPI flash may render the system unbootable.
-
-	  To compile this driver as a module, choose M here: the module
-	  will be called spi-intel-pci.
-
-config SPI_INTEL_PLATFORM_HWSEQ
-	tristate "Intel PCH/PCU SPI flash platform driver hardware sequencing only"
-	depends on X86 || COMPILE_TEST
-	depends on SPI_MEM
-	select SPI_INTEL
-	help
-	  This enables platform support for the Intel PCH/PCU SPI
-	  controller in master mode. This controller is present in modern
-	  Intel hardware and is used to hold BIOS and other persistent
-	  settings. Using this driver it is possible to upgrade BIOS
-	  directly from Linux.
-	  The driver will use HW sequencing capabilities from the chip.
-
-	  Say N here unless you know what you are doing. Overwriting the
-	  SPI flash may render the system unbootable.
-
-	  To compile this driver as a module, choose M here: the module
-	  will be called spi-intel-platform.
-
 config SPI_INTEL_PCI
-	tristate "Intel PCH/PCU SPI flash PCI driver hardware and software sequencing (DANGEROUS)"
+	tristate "Intel PCH/PCU SPI flash PCI driver"
 	depends on PCI
 	depends on X86 || COMPILE_TEST
 	depends on SPI_MEM
 	select SPI_INTEL
-	select SPI_INTEL_SWSEQ
 	help
 	  This enables PCI support for the Intel PCH/PCU SPI controller in
 	  master mode. This controller is present in modern Intel hardware
 	  and is used to hold BIOS and other persistent settings. Using
 	  this driver it is possible to upgrade BIOS directly from Linux.
-	  The driver will use SW and HW sequencing capabilities from the chip.
+	  The driver will use hardware sequencing capabilities from the chip
+	  by default.
 
 	  Say N here unless you know what you are doing. Overwriting the
 	  SPI flash may render the system unbootable.
@@ -502,24 +461,31 @@ config SPI_INTEL_PCI
 	  will be called spi-intel-pci.
 
 config SPI_INTEL_PLATFORM
-	tristate "Intel PCH/PCU SPI flash platform driver hardware and software sequencing (DANGEROUS)"
+	tristate "Intel PCH/PCU SPI flash platform driver"
 	depends on X86 || COMPILE_TEST
 	depends on SPI_MEM
 	select SPI_INTEL
-	select SPI_INTEL_SWSEQ
 	help
 	  This enables platform support for the Intel PCH/PCU SPI
 	  controller in master mode. This controller is present in modern
 	  Intel hardware and is used to hold BIOS and other persistent
 	  settings. Using this driver it is possible to upgrade BIOS
 	  directly from Linux.
-	  The driver will use SW and HW sequencing capabilities from the chip.
+	  The driver will use hardware sequencing capabilities from the chip
+	  by default.
 
 	  Say N here unless you know what you are doing. Overwriting the
 	  SPI flash may render the system unbootable.
 
 	  To compile this driver as a module, choose M here: the module
 	  will be called spi-intel-platform.
+
+config SPI_INTEL_SWSEQ
+	tristate "Intel SPI controller software sequencing support (DANGEROUS)"
+	depends on X86 || COMPILE_TEST
+	depends on SPI_MEM
+	help
+	  This enables software sequencing functionality to the SPI controller
 
 config SPI_JCORE
 	tristate "J-Core SPI Master"
