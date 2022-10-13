@@ -108,7 +108,23 @@
 #define ERASE_OPCODE_SHIFT		8
 #define ERASE_OPCODE_MASK		(0xff << ERASE_OPCODE_SHIFT)
 #define ERASE_64K_OPCODE_SHIFT		16
-#define ERASE_64K_OPCODE_MASK		(0xff << ERASE_64K_OPCODE_SHIFT)
+#define ERASE_64K_OPCODE_MASK		(0xff << ERASE_OPCODE_SHIFT)
+
+/* Flash descriptor fields */
+#define FLVALSIG_MAGIC			0x0ff0a55a
+#define FLMAP0_NC_MASK			GENMASK(9, 8)
+#define FLMAP0_NC_SHIFT			8
+#define FLMAP0_FCBA_MASK		GENMASK(7, 0)
+
+#define FLCOMP_C0DEN_MASK		GENMASK(3, 0)
+#define FLCOMP_C0DEN_512K		0x00
+#define FLCOMP_C0DEN_1M			0x01
+#define FLCOMP_C0DEN_2M			0x02
+#define FLCOMP_C0DEN_4M			0x03
+#define FLCOMP_C0DEN_8M			0x04
+#define FLCOMP_C0DEN_16M		0x05
+#define FLCOMP_C0DEN_32M		0x06
+#define FLCOMP_C0DEN_64M		0x07
 
 #define INTEL_SPI_TIMEOUT		5000 /* ms */
 #define INTEL_SPI_FIFO_SZ		64
@@ -123,6 +139,7 @@
  * @master: Pointer to the SPI controller structure
  * @nregions: Maximum number of regions
  * @pr_num: Maximum number of protected range registers
+ * @chip0_size: Size of the first flash chip in bytes
  * @locked: Is SPI setting locked
  * @swseq_reg: Use SW sequencer in register reads/writes
  * @swseq_erase: Use SW sequencer in erase operation
@@ -141,10 +158,11 @@ struct intel_spi {
 	struct spi_controller *master;
 	size_t nregions;
 	size_t pr_num;
+	size_t chip0_size;
 	bool locked;
 	bool swseq_reg;
 	bool swseq_erase;
-	bool swseq_enabled;
+    bool swseq_enabled;
 	u8 atomic_preopcode;
 	u8 opcodes[8];
 	const struct intel_spi_mem_op *mem_ops;
@@ -154,6 +172,7 @@ struct intel_spi_mem_op {
 	struct spi_mem_op mem_op;
 	u32 replacement_op;
 	int (*exec_op)(struct intel_spi *ispi,
+		       const struct spi_mem *mem,
 		       const struct intel_spi_mem_op *iop,
 		       const struct spi_mem_op *op);
 };

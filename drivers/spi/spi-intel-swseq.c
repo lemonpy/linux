@@ -36,10 +36,10 @@ inline bool is_swseq_enabled(void)
 	return true;
 }
 
-int handle_swseq_wren(const struct intel_spi *ispi)
+int handle_swseq_wren(struct intel_spi *ispi)
 {
 	u16 preop;
-	u8 opcode = SPINOR_OP_WREN;
+	const u8 opcode = SPINOR_OP_WREN;
 
 	if (!ispi->swseq_reg)
 		return 0;
@@ -89,8 +89,8 @@ static int intel_spi_opcode_index(const struct intel_spi *ispi, const u8 opcode,
 	return 0;
 }
 
-int intel_spi_sw_cycle(const struct intel_spi *ispi, const u8 opcode, const size_t len,
-		       const int optype)
+int intel_spi_sw_cycle(const struct intel_spi *ispi, u8 opcode, size_t len,
+		       int optype)
 {
 	u32 val = 0, status;
 	u8 atomic_preopcode;
@@ -154,6 +154,27 @@ int intel_spi_sw_cycle(const struct intel_spi *ispi, const u8 opcode, const size
 	return 0;
 }
 
+void disable_smi_generation(const struct intel_spi *ispi)
+{
+    u32 val;
+    val = readl(ispi->sregs + SSFSTS_CTL);
+    val &= ~SSFSTS_CTL_FSMIE;
+    writel(val, ispi->sregs + SSFSTS_CTL);
+}
+
+void populate_opmenus(const struct intel_spi *ispi)
+{
+    opmenu0 = readl(ispi->sregs + OPMENU0);
+    opmenu1 = readl(ispi->sregs + OPMENU1);
+
+    if (opmenu0 && opmenu1) {
+            for (i = 0; i < ARRAY_SIZE(ispi->opcodes) / 2; i++) {
+                ispi->opcodes[i] = opmenu0 >> i * 8;
+                ispi->opcodes[i + 4] = opmenu1 >> i * 8;
+            }
+    }
+}
+
 #else
 static inline void log_error_swseq_not_supported(const struct intel_spi *ispi)
 {
@@ -163,7 +184,7 @@ static inline void log_error_swseq_not_supported(const struct intel_spi *ispi)
 int handle_swseq_wren(const struct intel_spi *ispi)
 {
 	log_error_swseq_not_supported(ispi);
-	return -EINVAL;
+	return 0;
 }
 
 bool mem_op_supported_on_spi_locked(const struct intel_spi *ispi,
@@ -173,8 +194,8 @@ bool mem_op_supported_on_spi_locked(const struct intel_spi *ispi,
 	return false;
 }
 
-int intel_spi_sw_cycle(const struct intel_spi *ispi, const u8 opcode, const size_t len,
-		       const int optype)
+int intel_spi_sw_cycle(const struct intel_spi *ispi, u8 opcode, size_t len,
+		       int optype)
 {
 	log_error_swseq_not_supported(ispi);
 	return -ENOTSUPP;
@@ -184,6 +205,17 @@ inline bool is_swseq_enabled(void)
 {
 	return false;
 }
+
+void disable_smi_generation(const struct intel_spi *ispi)
+{
+	log_error_swseq_not_supported(ispi);
+}
+
+void populate_opmenus(const struct intel_spi *ispi)
+{
+	log_error_swseq_not_supported(ispi);
+}
+
 #endif
 
 #endif /* SPI_INTEL_SWSEQ_H */

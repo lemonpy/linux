@@ -11,12 +11,14 @@
 
 #include <linux/types.h>
 
-int intel_spi_sw_cycle(const struct intel_spi *ispi, const u8 opcode, const size_t len,
-		       const int optype);
+int intel_spi_sw_cycle(const struct intel_spi *ispi, u8 opcode, size_t len,
+		       int optype);
 inline bool is_swseq_enabled(void);
-int handle_swseq_wren(const struct intel_spi *ispi);
+int handle_swseq_wren(struct intel_spi *ispi);
 bool mem_op_supported_on_spi_locked(const struct intel_spi *ispi,
 				    const struct spi_mem_op *op);
+void disable_smi_generation(const struct intel_spi *ispi);
+void populate_opmenus(const struct intel_spi *ispi);
 
 #endif /* SPI_INTEL_SWSEQ_H */
 
