@@ -17,6 +17,8 @@
 #include <linux/spi/spi-mem.h>
 
 #include "spi-intel.h"
+#include "spi-intel-common.h"
+#include "spi-intel-swseq.h"
 
 /* Offsets are from @ispi->base */
 #define BFPREG				0x00
@@ -259,9 +261,12 @@ static void intel_spi_dump_regs(struct intel_spi *ispi)
 	}
 
 	dev_dbg(ispi->dev, "Using %cW sequencer for register access\n",
-		ispi->swseq_reg ? 'S' : 'H');
+		ispi->swseq_reg && ispi->swseq_enabled ? 'S' : 'H');
 	dev_dbg(ispi->dev, "Using %cW sequencer for erase operation\n",
-		ispi->swseq_erase ? 'S' : 'H');
+		ispi->swseq_erase && ispi->swseq_enabled ? 'S' : 'H');
+
+	if (ispi->swseq_enabled)
+		dev_dbg(ispi->dev, "SW sequencer is disabled for all operations\n");
 }
 
 /* Reads max INTEL_SPI_FIFO_SZ bytes from the device fifo */
@@ -479,7 +484,7 @@ static int intel_spi_read_reg(struct intel_spi *ispi, const struct spi_mem *mem,
 
 	writel(intel_spi_chip_addr(ispi, mem), ispi->base + FADDR);
 
-	if (ispi->swseq_reg)
+	if (ispi->swseq_reg && ispi->swseq_enabled)
 		ret = intel_spi_sw_cycle(ispi, opcode, nbytes,
 					 OPTYPE_READ_NO_ADDR);
 	else
@@ -508,26 +513,8 @@ static int intel_spi_write_reg(struct intel_spi *ispi, const struct spi_mem *mem
 	 * When hardware sequencer is used there is no need to program
 	 * any opcodes (it handles them automatically as part of a command).
 	 */
-	if (opcode == SPINOR_OP_WREN) {
-		u16 preop;
-
-		if (!ispi->swseq_reg)
-			return 0;
-
-		preop = readw(ispi->sregs + PREOP_OPTYPE);
-		if ((preop & 0xff) != opcode && (preop >> 8) != opcode) {
-			if (ispi->locked)
-				return -EINVAL;
-			writel(opcode, ispi->sregs + PREOP_OPTYPE);
-		}
-
-		/*
-		 * This enables atomic sequence on next SW sycle. Will
-		 * be cleared after next operation.
-		 */
-		ispi->atomic_preopcode = opcode;
-		return 0;
-	}
+	if (opcode == SPINOR_OP_WREN)
+		return handle_swseq_wren(ispi);
 
 	/*
 	 * We hope that HW sequencer will do the right thing automatically and
@@ -545,7 +532,7 @@ static int intel_spi_write_reg(struct intel_spi *ispi, const struct spi_mem *mem
 	if (ret)
 		return ret;
 
-	if (ispi->swseq_reg)
+	if (ispi->swseq_reg && ispi->swseq_enabled)
 		return intel_spi_sw_cycle(ispi, opcode, nbytes,
 					  OPTYPE_WRITE_NO_ADDR);
 	return intel_spi_hw_cycle(ispi, opcode, nbytes);
@@ -558,6 +545,7 @@ static int intel_spi_read(struct intel_spi *ispi, const struct spi_mem *mem,
 	u32 addr = intel_spi_chip_addr(ispi, mem) + op->addr.val;
 	size_t block_size, nbytes = op->data.nbytes;
 	void *read_buf = op->data.buf.in;
+	u32 addr = op->addr.val;
 	u32 val, status;
 	int ret;
 
@@ -686,7 +674,11 @@ static int intel_spi_erase(struct intel_spi *ispi, const struct spi_mem *mem,
 
 	writel(addr, ispi->base + FADDR);
 
-	if (ispi->swseq_erase)
+	/*
+	 * If swseq_erase is false, it means that we cannot erase using
+	 * HW sequencer.
+	 */
+	if (ispi->swseq_erase && ispi->swseq_enabled)
 		return intel_spi_sw_cycle(ispi, opcode, 0,
 					  OPTYPE_WRITE_WITH_ADDR);
 
@@ -767,18 +759,8 @@ static bool intel_spi_supports_mem_op(struct spi_mem *mem,
 	 * For software sequencer check that the opcode is actually
 	 * present in the opmenu if it is locked.
 	 */
-	if (ispi->swseq_reg && ispi->locked) {
-		int i;
-
-		/* Check if it is in the locked opcodes list */
-		for (i = 0; i < ARRAY_SIZE(ispi->opcodes); i++) {
-			if (ispi->opcodes[i] == op->cmd.opcode)
-				return true;
-		}
-
-		dev_dbg(ispi->dev, "%#x not supported\n", op->cmd.opcode);
-		return false;
-	}
+	if (ispi->swseq_reg && ispi->locked && ispi->swseq_enabled)
+		return mem_op_supported_on_spi_locked(ispi, op);
 
 	return true;
 }
@@ -1070,6 +1052,8 @@ static int intel_spi_init(struct intel_spi *ispi)
 	bool erase_64k = false;
 	int i;
 
+	ispi->swseq_enabled = is_swseq_enabled();
+
 	switch (ispi->info->type) {
 	case INTEL_SPI_BYT:
 		ispi->sregs = ispi->base + BYT_SSFSTS_CTL;
@@ -1141,12 +1125,19 @@ static int intel_spi_init(struct intel_spi *ispi)
 		return -EINVAL;
 	}
 
+	if ((ispi->swseq_erase || !erase_64k) && !ispi->swseq_enabled)
+	{
+		dev_err(ispi->dev, "software sequencer not enabled and erase"
+				   "is not supported by hardware sequencing\n");
+		return -EINVAL;
+	}
+
 	/*
 	 * Some controllers can only do basic operations using hardware
 	 * sequencer. All other operations are supposed to be carried out
 	 * using software sequencer.
 	 */
-	if (ispi->swseq_reg) {
+	if (ispi->swseq_reg && ispi->swseq_enabled) {
 		/* Disable #SMI generation from SW sequencer */
 		val = readl(ispi->sregs + SSFSTS_CTL);
 		val &= ~SSFSTS_CTL_FSMIE;
@@ -1157,7 +1148,7 @@ static int intel_spi_init(struct intel_spi *ispi)
 	val = readl(ispi->base + HSFSTS_CTL);
 	ispi->locked = !!(val & HSFSTS_CTL_FLOCKDN);
 
-	if (ispi->locked && ispi->sregs) {
+	if (ispi->locked && ispi->sregs && ispi->swseq_enabled) {
 		/*
 		 * BIOS programs allowed opcodes and then locks down the
 		 * register. So read back what opcodes it decided to support.
