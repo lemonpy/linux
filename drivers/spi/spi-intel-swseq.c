@@ -1,0 +1,221 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Intel PCH/PCU SPI flash driver.
+ *
+ * Copyright (C) 2016 - 2022, Intel Corporation
+ * Author: Mika Westerberg <mika.westerberg@linux.intel.com>
+ */
+
+#ifndef SPI_INTEL_SWSEQ_H
+#define SPI_INTEL_SWSEQ_H
+
+#include <linux/iopoll.h>
+
+#include "spi-intel.h"
+#include "spi-intel-common.h"
+#include "spi-intel-swseq.h"
+
+#if defined(CONFIG_SPI_INTEL_SWSEQ)
+bool mem_op_supported_on_spi_locked(const struct intel_spi *ispi,
+				    const struct spi_mem_op *op)
+{
+	int i;
+
+	/* Check if it is in the locked opcodes list */
+	for (i = 0; i < ARRAY_SIZE(ispi->opcodes); i++) {
+		if (ispi->opcodes[i] == op->cmd.opcode)
+			return true;
+	}
+
+	dev_dbg(ispi->dev, "%#x not supported\n", op->cmd.opcode);
+	return false;
+}
+
+inline bool is_swseq_enabled(void)
+{
+	return true;
+}
+
+int handle_swseq_wren(struct intel_spi *ispi)
+{
+	u16 preop;
+	const u8 opcode = SPINOR_OP_WREN;
+
+	if (!ispi->swseq_reg)
+		return 0;
+
+	preop = readw(ispi->sregs + PREOP_OPTYPE);
+	if ((preop & 0xff) != SPINOR_OP_WREN && (preop >> 8) != SPINOR_OP_WREN) {
+		if (ispi->locked)
+			return -EINVAL;
+		writel(opcode, ispi->sregs + PREOP_OPTYPE);
+	}
+
+	/*
+	* This enables atomic sequence on next SW sycle. Will
+	* be cleared after next operation.
+	*/
+	ispi->atomic_preopcode = opcode;
+	return 0;
+}
+
+static int intel_spi_wait_sw_busy(const struct intel_spi *ispi)
+{
+	u32 val;
+
+	return readl_poll_timeout(ispi->sregs + SSFSTS_CTL, val,
+				  !(val & SSFSTS_CTL_SCIP), 0,
+				  INTEL_SPI_TIMEOUT * 1000);
+}
+
+static int intel_spi_opcode_index(const struct intel_spi *ispi, const u8 opcode, const int optype)
+{
+	int i;
+	int preop;
+
+	if (ispi->locked) {
+		for (i = 0; i < ARRAY_SIZE(ispi->opcodes); i++)
+			if (ispi->opcodes[i] == opcode)
+				return i;
+
+		return -EINVAL;
+	}
+
+	/* The lock is off, so just use index 0 */
+	writel(opcode, ispi->sregs + OPMENU0);
+	preop = readw(ispi->sregs + PREOP_OPTYPE);
+	writel(optype << 16 | preop, ispi->sregs + PREOP_OPTYPE);
+
+	return 0;
+}
+
+int intel_spi_sw_cycle(const struct intel_spi *ispi, u8 opcode, size_t len,
+		       int optype)
+{
+	u32 val = 0, status;
+	u8 atomic_preopcode;
+	int ret;
+
+	ret = intel_spi_opcode_index(ispi, opcode, optype);
+	if (ret < 0)
+		return ret;
+
+	if (len > INTEL_SPI_FIFO_SZ)
+		return -EINVAL;
+
+	/*
+	 * Always clear it after each SW sequencer operation regardless
+	 * of whether it is successful or not.
+	 */
+	atomic_preopcode = ispi->atomic_preopcode;
+	ispi->atomic_preopcode = 0;
+
+	/* Only mark 'Data Cycle' bit when there is data to be transferred */
+	if (len > 0)
+		val = ((len - 1) << SSFSTS_CTL_DBC_SHIFT) | SSFSTS_CTL_DS;
+	val |= ret << SSFSTS_CTL_COP_SHIFT;
+	val |= SSFSTS_CTL_FCERR | SSFSTS_CTL_FDONE;
+	val |= SSFSTS_CTL_SCGO;
+	if (atomic_preopcode) {
+		u16 preop;
+
+		switch (optype) {
+		case OPTYPE_WRITE_NO_ADDR:
+		case OPTYPE_WRITE_WITH_ADDR:
+			/* Pick matching preopcode for the atomic sequence */
+			preop = readw(ispi->sregs + PREOP_OPTYPE);
+			if ((preop & 0xff) == atomic_preopcode)
+				; /* Do nothing */
+			else if ((preop >> 8) == atomic_preopcode)
+				val |= SSFSTS_CTL_SPOP;
+			else
+				return -EINVAL;
+
+			/* Enable atomic sequence */
+			val |= SSFSTS_CTL_ACS;
+			break;
+
+		default:
+			return -EINVAL;
+		}
+	}
+	writel(val, ispi->sregs + SSFSTS_CTL);
+
+	ret = intel_spi_wait_sw_busy(ispi);
+	if (ret)
+		return ret;
+
+	status = readl(ispi->sregs + SSFSTS_CTL);
+	if (status & SSFSTS_CTL_FCERR)
+		return -EIO;
+	else if (status & SSFSTS_CTL_AEL)
+		return -EACCES;
+
+	return 0;
+}
+
+void disable_smi_generation(const struct intel_spi *ispi)
+{
+    u32 val;
+    val = readl(ispi->sregs + SSFSTS_CTL);
+    val &= ~SSFSTS_CTL_FSMIE;
+    writel(val, ispi->sregs + SSFSTS_CTL);
+}
+
+void populate_opmenus(const struct intel_spi *ispi)
+{
+    opmenu0 = readl(ispi->sregs + OPMENU0);
+    opmenu1 = readl(ispi->sregs + OPMENU1);
+
+    if (opmenu0 && opmenu1) {
+            for (i = 0; i < ARRAY_SIZE(ispi->opcodes) / 2; i++) {
+                ispi->opcodes[i] = opmenu0 >> i * 8;
+                ispi->opcodes[i + 4] = opmenu1 >> i * 8;
+            }
+    }
+}
+
+#else
+static inline void log_error_swseq_not_supported(const struct intel_spi *ispi)
+{
+	dev_err(ispi->dev, "SW sequencing is not enabled");
+}
+
+int handle_swseq_wren(const struct intel_spi *ispi)
+{
+	log_error_swseq_not_supported(ispi);
+	return 0;
+}
+
+bool mem_op_supported_on_spi_locked(const struct intel_spi *ispi,
+				    const struct spi_mem_op *op)
+{
+	log_error_swseq_not_supported(ispi);
+	return false;
+}
+
+int intel_spi_sw_cycle(const struct intel_spi *ispi, u8 opcode, size_t len,
+		       int optype)
+{
+	log_error_swseq_not_supported(ispi);
+	return -ENOTSUPP;
+}
+
+inline bool is_swseq_enabled(void)
+{
+	return false;
+}
+
+void disable_smi_generation(const struct intel_spi *ispi)
+{
+	log_error_swseq_not_supported(ispi);
+}
+
+void populate_opmenus(const struct intel_spi *ispi)
+{
+	log_error_swseq_not_supported(ispi);
+}
+
+#endif
+
+#endif /* SPI_INTEL_SWSEQ_H */

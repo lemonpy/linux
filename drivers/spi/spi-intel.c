@@ -17,169 +17,9 @@
 #include <linux/spi/spi-mem.h>
 
 #include "spi-intel.h"
+#include "spi-intel-common.h"
+#include "spi-intel-swseq.h"
 
-/* Offsets are from @ispi->base */
-#define BFPREG				0x00
-
-#define HSFSTS_CTL			0x04
-#define HSFSTS_CTL_FSMIE		BIT(31)
-#define HSFSTS_CTL_FDBC_SHIFT		24
-#define HSFSTS_CTL_FDBC_MASK		(0x3f << HSFSTS_CTL_FDBC_SHIFT)
-
-#define HSFSTS_CTL_FCYCLE_SHIFT		17
-#define HSFSTS_CTL_FCYCLE_MASK		(0x0f << HSFSTS_CTL_FCYCLE_SHIFT)
-/* HW sequencer opcodes */
-#define HSFSTS_CTL_FCYCLE_READ		(0x00 << HSFSTS_CTL_FCYCLE_SHIFT)
-#define HSFSTS_CTL_FCYCLE_WRITE		(0x02 << HSFSTS_CTL_FCYCLE_SHIFT)
-#define HSFSTS_CTL_FCYCLE_ERASE		(0x03 << HSFSTS_CTL_FCYCLE_SHIFT)
-#define HSFSTS_CTL_FCYCLE_ERASE_64K	(0x04 << HSFSTS_CTL_FCYCLE_SHIFT)
-#define HSFSTS_CTL_FCYCLE_RDID		(0x06 << HSFSTS_CTL_FCYCLE_SHIFT)
-#define HSFSTS_CTL_FCYCLE_WRSR		(0x07 << HSFSTS_CTL_FCYCLE_SHIFT)
-#define HSFSTS_CTL_FCYCLE_RDSR		(0x08 << HSFSTS_CTL_FCYCLE_SHIFT)
-
-#define HSFSTS_CTL_FGO			BIT(16)
-#define HSFSTS_CTL_FLOCKDN		BIT(15)
-#define HSFSTS_CTL_FDV			BIT(14)
-#define HSFSTS_CTL_SCIP			BIT(5)
-#define HSFSTS_CTL_AEL			BIT(2)
-#define HSFSTS_CTL_FCERR		BIT(1)
-#define HSFSTS_CTL_FDONE		BIT(0)
-
-#define FADDR				0x08
-#define DLOCK				0x0c
-#define FDATA(n)			(0x10 + ((n) * 4))
-
-#define FRACC				0x50
-
-#define FREG(n)				(0x54 + ((n) * 4))
-#define FREG_BASE_MASK			0x3fff
-#define FREG_LIMIT_SHIFT		16
-#define FREG_LIMIT_MASK			(0x03fff << FREG_LIMIT_SHIFT)
-
-/* Offset is from @ispi->pregs */
-#define PR(n)				((n) * 4)
-#define PR_WPE				BIT(31)
-#define PR_LIMIT_SHIFT			16
-#define PR_LIMIT_MASK			(0x3fff << PR_LIMIT_SHIFT)
-#define PR_RPE				BIT(15)
-#define PR_BASE_MASK			0x3fff
-
-/* Offsets are from @ispi->sregs */
-#define SSFSTS_CTL			0x00
-#define SSFSTS_CTL_FSMIE		BIT(23)
-#define SSFSTS_CTL_DS			BIT(22)
-#define SSFSTS_CTL_DBC_SHIFT		16
-#define SSFSTS_CTL_SPOP			BIT(11)
-#define SSFSTS_CTL_ACS			BIT(10)
-#define SSFSTS_CTL_SCGO			BIT(9)
-#define SSFSTS_CTL_COP_SHIFT		12
-#define SSFSTS_CTL_FRS			BIT(7)
-#define SSFSTS_CTL_DOFRS		BIT(6)
-#define SSFSTS_CTL_AEL			BIT(4)
-#define SSFSTS_CTL_FCERR		BIT(3)
-#define SSFSTS_CTL_FDONE		BIT(2)
-#define SSFSTS_CTL_SCIP			BIT(0)
-
-#define PREOP_OPTYPE			0x04
-#define OPMENU0				0x08
-#define OPMENU1				0x0c
-
-#define OPTYPE_READ_NO_ADDR		0
-#define OPTYPE_WRITE_NO_ADDR		1
-#define OPTYPE_READ_WITH_ADDR		2
-#define OPTYPE_WRITE_WITH_ADDR		3
-
-/* CPU specifics */
-#define BYT_PR				0x74
-#define BYT_SSFSTS_CTL			0x90
-#define BYT_FREG_NUM			5
-#define BYT_PR_NUM			5
-
-#define LPT_PR				0x74
-#define LPT_SSFSTS_CTL			0x90
-#define LPT_FREG_NUM			5
-#define LPT_PR_NUM			5
-
-#define BXT_PR				0x84
-#define BXT_SSFSTS_CTL			0xa0
-#define BXT_FREG_NUM			12
-#define BXT_PR_NUM			6
-
-#define CNL_PR				0x84
-#define CNL_FREG_NUM			6
-#define CNL_PR_NUM			5
-
-#define LVSCC				0xc4
-#define UVSCC				0xc8
-#define ERASE_OPCODE_SHIFT		8
-#define ERASE_OPCODE_MASK		(0xff << ERASE_OPCODE_SHIFT)
-#define ERASE_64K_OPCODE_SHIFT		16
-#define ERASE_64K_OPCODE_MASK		(0xff << ERASE_OPCODE_SHIFT)
-
-/* Flash descriptor fields */
-#define FLVALSIG_MAGIC			0x0ff0a55a
-#define FLMAP0_NC_MASK			GENMASK(9, 8)
-#define FLMAP0_NC_SHIFT			8
-#define FLMAP0_FCBA_MASK		GENMASK(7, 0)
-
-#define FLCOMP_C0DEN_MASK		GENMASK(3, 0)
-#define FLCOMP_C0DEN_512K		0x00
-#define FLCOMP_C0DEN_1M			0x01
-#define FLCOMP_C0DEN_2M			0x02
-#define FLCOMP_C0DEN_4M			0x03
-#define FLCOMP_C0DEN_8M			0x04
-#define FLCOMP_C0DEN_16M		0x05
-#define FLCOMP_C0DEN_32M		0x06
-#define FLCOMP_C0DEN_64M		0x07
-
-#define INTEL_SPI_TIMEOUT		5000 /* ms */
-#define INTEL_SPI_FIFO_SZ		64
-
-/**
- * struct intel_spi - Driver private data
- * @dev: Device pointer
- * @info: Pointer to board specific info
- * @base: Beginning of MMIO space
- * @pregs: Start of protection registers
- * @sregs: Start of software sequencer registers
- * @master: Pointer to the SPI controller structure
- * @nregions: Maximum number of regions
- * @pr_num: Maximum number of protected range registers
- * @chip0_size: Size of the first flash chip in bytes
- * @locked: Is SPI setting locked
- * @swseq_reg: Use SW sequencer in register reads/writes
- * @swseq_erase: Use SW sequencer in erase operation
- * @atomic_preopcode: Holds preopcode when atomic sequence is requested
- * @opcodes: Opcodes which are supported. This are programmed by BIOS
- *           before it locks down the controller.
- * @mem_ops: Pointer to SPI MEM ops supported by the controller
- */
-struct intel_spi {
-	struct device *dev;
-	const struct intel_spi_boardinfo *info;
-	void __iomem *base;
-	void __iomem *pregs;
-	void __iomem *sregs;
-	struct spi_controller *master;
-	size_t nregions;
-	size_t pr_num;
-	size_t chip0_size;
-	bool locked;
-	bool swseq_reg;
-	bool swseq_erase;
-	u8 atomic_preopcode;
-	u8 opcodes[8];
-	const struct intel_spi_mem_op *mem_ops;
-};
-
-struct intel_spi_mem_op {
-	struct spi_mem_op mem_op;
-	u32 replacement_op;
-	int (*exec_op)(struct intel_spi *ispi,
-		       const struct spi_mem *mem,
-		       const struct intel_spi_mem_op *iop,
-		       const struct spi_mem_op *op);
-};
 
 static bool writeable;
 module_param(writeable, bool, 0);
@@ -259,9 +99,12 @@ static void intel_spi_dump_regs(struct intel_spi *ispi)
 	}
 
 	dev_dbg(ispi->dev, "Using %cW sequencer for register access\n",
-		ispi->swseq_reg ? 'S' : 'H');
+		ispi->swseq_reg && ispi->swseq_enabled ? 'S' : 'H');
 	dev_dbg(ispi->dev, "Using %cW sequencer for erase operation\n",
-		ispi->swseq_erase ? 'S' : 'H');
+		ispi->swseq_erase && ispi->swseq_enabled ? 'S' : 'H');
+
+	if (!ispi->swseq_enabled)
+		dev_dbg(ispi->dev, "SW sequencer is disabled for all operations\n");
 }
 
 /* Reads max INTEL_SPI_FIFO_SZ bytes from the device fifo */
@@ -395,71 +238,6 @@ static int intel_spi_hw_cycle(struct intel_spi *ispi, u8 opcode, size_t len)
 	return 0;
 }
 
-static int intel_spi_sw_cycle(struct intel_spi *ispi, u8 opcode, size_t len,
-			      int optype)
-{
-	u32 val = 0, status;
-	u8 atomic_preopcode;
-	int ret;
-
-	ret = intel_spi_opcode_index(ispi, opcode, optype);
-	if (ret < 0)
-		return ret;
-
-	if (len > INTEL_SPI_FIFO_SZ)
-		return -EINVAL;
-
-	/*
-	 * Always clear it after each SW sequencer operation regardless
-	 * of whether it is successful or not.
-	 */
-	atomic_preopcode = ispi->atomic_preopcode;
-	ispi->atomic_preopcode = 0;
-
-	/* Only mark 'Data Cycle' bit when there is data to be transferred */
-	if (len > 0)
-		val = ((len - 1) << SSFSTS_CTL_DBC_SHIFT) | SSFSTS_CTL_DS;
-	val |= ret << SSFSTS_CTL_COP_SHIFT;
-	val |= SSFSTS_CTL_FCERR | SSFSTS_CTL_FDONE;
-	val |= SSFSTS_CTL_SCGO;
-	if (atomic_preopcode) {
-		u16 preop;
-
-		switch (optype) {
-		case OPTYPE_WRITE_NO_ADDR:
-		case OPTYPE_WRITE_WITH_ADDR:
-			/* Pick matching preopcode for the atomic sequence */
-			preop = readw(ispi->sregs + PREOP_OPTYPE);
-			if ((preop & 0xff) == atomic_preopcode)
-				; /* Do nothing */
-			else if ((preop >> 8) == atomic_preopcode)
-				val |= SSFSTS_CTL_SPOP;
-			else
-				return -EINVAL;
-
-			/* Enable atomic sequence */
-			val |= SSFSTS_CTL_ACS;
-			break;
-
-		default:
-			return -EINVAL;
-		}
-	}
-	writel(val, ispi->sregs + SSFSTS_CTL);
-
-	ret = intel_spi_wait_sw_busy(ispi);
-	if (ret)
-		return ret;
-
-	status = readl(ispi->sregs + SSFSTS_CTL);
-	if (status & SSFSTS_CTL_FCERR)
-		return -EIO;
-	else if (status & SSFSTS_CTL_AEL)
-		return -EACCES;
-
-	return 0;
-}
-
 static u32 intel_spi_chip_addr(const struct intel_spi *ispi,
 			       const struct spi_mem *mem)
 {
@@ -479,7 +257,7 @@ static int intel_spi_read_reg(struct intel_spi *ispi, const struct spi_mem *mem,
 
 	writel(intel_spi_chip_addr(ispi, mem), ispi->base + FADDR);
 
-	if (ispi->swseq_reg)
+	if (ispi->swseq_reg && ispi->swseq_enabled)
 		ret = intel_spi_sw_cycle(ispi, opcode, nbytes,
 					 OPTYPE_READ_NO_ADDR);
 	else
@@ -508,26 +286,8 @@ static int intel_spi_write_reg(struct intel_spi *ispi, const struct spi_mem *mem
 	 * When hardware sequencer is used there is no need to program
 	 * any opcodes (it handles them automatically as part of a command).
 	 */
-	if (opcode == SPINOR_OP_WREN) {
-		u16 preop;
-
-		if (!ispi->swseq_reg)
-			return 0;
-
-		preop = readw(ispi->sregs + PREOP_OPTYPE);
-		if ((preop & 0xff) != opcode && (preop >> 8) != opcode) {
-			if (ispi->locked)
-				return -EINVAL;
-			writel(opcode, ispi->sregs + PREOP_OPTYPE);
-		}
-
-		/*
-		 * This enables atomic sequence on next SW sycle. Will
-		 * be cleared after next operation.
-		 */
-		ispi->atomic_preopcode = opcode;
-		return 0;
-	}
+	if (opcode == SPINOR_OP_WREN)
+		return handle_swseq_wren(ispi);
 
 	/*
 	 * We hope that HW sequencer will do the right thing automatically and
@@ -545,7 +305,7 @@ static int intel_spi_write_reg(struct intel_spi *ispi, const struct spi_mem *mem
 	if (ret)
 		return ret;
 
-	if (ispi->swseq_reg)
+	if (ispi->swseq_reg && ispi->swseq_enabled)
 		return intel_spi_sw_cycle(ispi, opcode, nbytes,
 					  OPTYPE_WRITE_NO_ADDR);
 	return intel_spi_hw_cycle(ispi, opcode, nbytes);
@@ -558,6 +318,7 @@ static int intel_spi_read(struct intel_spi *ispi, const struct spi_mem *mem,
 	u32 addr = intel_spi_chip_addr(ispi, mem) + op->addr.val;
 	size_t block_size, nbytes = op->data.nbytes;
 	void *read_buf = op->data.buf.in;
+	u32 addr = op->addr.val;
 	u32 val, status;
 	int ret;
 
@@ -686,7 +447,11 @@ static int intel_spi_erase(struct intel_spi *ispi, const struct spi_mem *mem,
 
 	writel(addr, ispi->base + FADDR);
 
-	if (ispi->swseq_erase)
+	/*
+	 * If swseq_erase is true, it means that we cannot erase using
+	 * HW sequencer.
+	 */
+	if (ispi->swseq_erase && ispi->swseq_enabled)
 		return intel_spi_sw_cycle(ispi, opcode, 0,
 					  OPTYPE_WRITE_WITH_ADDR);
 
@@ -767,18 +532,8 @@ static bool intel_spi_supports_mem_op(struct spi_mem *mem,
 	 * For software sequencer check that the opcode is actually
 	 * present in the opmenu if it is locked.
 	 */
-	if (ispi->swseq_reg && ispi->locked) {
-		int i;
-
-		/* Check if it is in the locked opcodes list */
-		for (i = 0; i < ARRAY_SIZE(ispi->opcodes); i++) {
-			if (ispi->opcodes[i] == op->cmd.opcode)
-				return true;
-		}
-
-		dev_dbg(ispi->dev, "%#x not supported\n", op->cmd.opcode);
-		return false;
-	}
+	if (ispi->swseq_reg && ispi->locked && ispi->swseq_enabled)
+		return mem_op_supported_on_spi_locked(ispi, op);
 
 	return true;
 }
@@ -1070,6 +825,8 @@ static int intel_spi_init(struct intel_spi *ispi)
 	bool erase_64k = false;
 	int i;
 
+	ispi->swseq_enabled = is_swseq_enabled();
+
 	switch (ispi->info->type) {
 	case INTEL_SPI_BYT:
 		ispi->sregs = ispi->base + BYT_SSFSTS_CTL;
@@ -1141,37 +898,34 @@ static int intel_spi_init(struct intel_spi *ispi)
 		return -EINVAL;
 	}
 
+	if ((ispi->swseq_erase || !erase_64k) && !ispi->swseq_enabled)
+	{
+		dev_err(ispi->dev, "software sequencer not enabled and erase"
+				   "is not supported by hardware sequencing\n");
+		return -EINVAL;
+	}
+
 	/*
 	 * Some controllers can only do basic operations using hardware
 	 * sequencer. All other operations are supposed to be carried out
 	 * using software sequencer.
 	 */
-	if (ispi->swseq_reg) {
+	if (ispi->swseq_reg && ispi->swseq_enabled) {
 		/* Disable #SMI generation from SW sequencer */
-		val = readl(ispi->sregs + SSFSTS_CTL);
-		val &= ~SSFSTS_CTL_FSMIE;
-		writel(val, ispi->sregs + SSFSTS_CTL);
+        disable_smi_generation(ispi);
 	}
 
 	/* Check controller's lock status */
 	val = readl(ispi->base + HSFSTS_CTL);
 	ispi->locked = !!(val & HSFSTS_CTL_FLOCKDN);
 
-	if (ispi->locked && ispi->sregs) {
+	if (ispi->locked && ispi->sregs && ispi->swseq_enabled) {
 		/*
 		 * BIOS programs allowed opcodes and then locks down the
 		 * register. So read back what opcodes it decided to support.
 		 * That's the set we are going to support as well.
 		 */
-		opmenu0 = readl(ispi->sregs + OPMENU0);
-		opmenu1 = readl(ispi->sregs + OPMENU1);
-
-		if (opmenu0 && opmenu1) {
-			for (i = 0; i < ARRAY_SIZE(ispi->opcodes) / 2; i++) {
-				ispi->opcodes[i] = opmenu0 >> i * 8;
-				ispi->opcodes[i + 4] = opmenu1 >> i * 8;
-			}
-		}
+        populate_opmenus(ispi);
 	}
 
 	if (erase_64k) {
