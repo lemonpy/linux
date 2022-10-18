@@ -12,6 +12,7 @@
 #include "spi-intel-common.h"
 #include "spi-intel-swseq.h"
 
+#if defined(CONFIG_SPI_INTEL_SWSEQ)
 bool mem_op_supported_on_spi_locked(const struct intel_spi *ispi,
 				    const struct spi_mem_op *op)
 {
@@ -177,5 +178,54 @@ void populate_opmenus(struct intel_spi *ispi, u32 *opmenu0, u32 *opmenu1)
     }
 }
 EXPORT_SYMBOL(populate_opmenus);
+
+#else
+static inline void log_error_swseq_not_supported(const struct intel_spi *ispi)
+{
+	dev_err(ispi->dev, "SW sequencing is not enabled");
+}
+
+int handle_swseq_wren(struct intel_spi *ispi)
+{
+	log_error_swseq_not_supported(ispi);
+	return -EINVAL;
+}
+EXPORT_SYMBOL(handle_swseq_wren);
+
+bool mem_op_supported_on_spi_locked(const struct intel_spi *ispi,
+				    const struct spi_mem_op *op)
+{
+	log_error_swseq_not_supported(ispi);
+	return false;
+}
+EXPORT_SYMBOL(mem_op_supported_on_spi_locked);
+
+int intel_spi_sw_cycle(struct intel_spi *ispi, u8 opcode, size_t len,
+		       int optype)
+{
+	log_error_swseq_not_supported(ispi);
+	return -ENOTSUPP;
+}
+EXPORT_SYMBOL(intel_spi_sw_cycle);
+
+inline bool is_swseq_enabled(void)
+{
+	return false;
+}
+EXPORT_SYMBOL(is_swseq_enabled);
+
+void disable_smi_generation(const struct intel_spi *ispi)
+{
+	log_error_swseq_not_supported(ispi);
+}
+EXPORT_SYMBOL(disable_smi_generation);
+
+void populate_opmenus(struct intel_spi *ispi, u32 *opmenu0, u32 *opmenu1)
+{
+	log_error_swseq_not_supported(ispi);
+}
+EXPORT_SYMBOL(populate_opmenus);
+
+#endif
 
 MODULE_LICENSE("GPL v2");
